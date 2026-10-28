@@ -1,279 +1,124 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="sv">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Bygg och kör – VR</title>
-<style>
-:root{--bg:#e9ecef;--fg:#1b1d20;--card:#fff;--ac:#e0a100;--mut:#5a6068;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
-@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#17191c;--fg:#eceef0;--card:#23262b;--ac:#f2b705;--mut:#9aa1a9}}
-:root[data-theme="dark"]{--bg:#17191c;--fg:#eceef0;--card:#23262b;--ac:#f2b705;--mut:#9aa1a9}
-html{scroll-padding-top:env(safe-area-inset-top,0px)}
-html,body{height:100%;margin:0}
-body{background:var(--bg);color:var(--fg);font-family:system-ui,-apple-system,"Segoe UI",sans-serif}
-canvas{position:fixed;inset:0;width:100%;height:100%;display:block}
-#ui{position:fixed;left:0;right:0;bottom:0;padding:16px 16px calc(16px + env(safe-area-inset-bottom,0px));display:flex}
-#card{background:var(--card);color:var(--fg);border-left:8px solid var(--ac);padding:18px 20px;max-width:440px;border-radius:4px}
-h1{font-size:1.5rem;margin:0 0 8px;font-weight:800}
-p{margin:0 0 10px;line-height:1.5;color:var(--mut);font-size:.95rem}
-button{font:inherit;font-weight:700;background:var(--ac);color:#1b1d20;border:0;padding:12px 20px;border-radius:4px;cursor:pointer}
-button:disabled{opacity:.5;cursor:default}
-button:focus-visible{outline:3px solid var(--fg);outline-offset:2px}
-</style>
+  <meta charset="utf-8">
+  <title>WebXR Vehicle Builder - Quest 3S</title>
+  <meta name="description" content="Ett fordonsskaparspel för Meta Quest 3S med WebXR">
+  
+  <!-- A-Frame och nödvändiga komponenter för fysik och VR-interaktion -->
+  <script src="https://aframe.io"></script>
+  <script src="https://jsdelivr.net"></script>
+  <script src="https://unpkg.com"></script>
+  <script src="https://unpkg.com"></script>
+
+  <style>
+    body { margin: 0; overflow: hidden; background-color: #000; }
+  </style>
+
+  <script>
+    // Enkel anpassad komponent för att fästa (snappa) delar till fordonschassit
+    AFRAME.registerComponent('snap-build', {
+      schema: {
+        target: { type: 'selector', default: '#chassis' },
+        snapDistance: { type: 'number', default: 0.4 }
+      },
+      init: function () {
+        this.el.addEventListener('dragdrop', (evt) => {
+          // När en del släpps nära chassit
+          let chassisPos = this.data.target.object3D.position;
+          let myPos = this.el.object3D.position;
+          let distance = chassisPos.distanceTo(myPos);
+
+          if (distance < this.data.snapDistance) {
+            // Fäst komponenten till chassit visuellt och logiskt
+            this.el.removeAttribute('dynamic-body');
+            this.el.setAttribute('static-body', '');
+            
+            // Justera positionen så den hamnar snyggt (t.ex. på sidan av chassit)
+            let relativeX = myPos.x > chassisPos.x ? 0.6 : -0.6;
+            this.el.setAttribute('position', `${chassisPos.x + relativeX} ${chassisPos.y - 0.2} ${myPos.z}`);
+            
+            // Ändra färg för att indikera lyckad montering
+            this.el.setAttribute('material', 'color', '#4CAF50');
+            console.log("Del monterad på fordonet!");
+          }
+        });
+      }
+    });
+
+    // Testfunktion för att "köra" fordonet när man trycker på en knapp
+    AFRAME.registerComponent('vehicle-controller', {
+      init: function () {
+        this.el.addEventListener('click', () => {
+          let chassis = document.querySelector('#chassis');
+          // Ge chassit en knuff framåt i fysikmotorn
+          chassis.setAttribute('dynamic-body', 'mass: 10');
+          setTimeout(() => {
+            let impulse = new CANNON.Vec3(0, 0, -15);
+            let point = new CANNON.Vec3(0, 0, 0);
+            chassis.body.applyImpulse(impulse, point);
+          }, 100);
+        });
+      }
+    });
+  </script>
 </head>
 <body>
-<div id="ui"><div id="card">
-<h1>Bygg och kör</h1>
-<p>Greppa delar med trigger eller grepp och släpp dem nära de gula formerna för att montera. När alla sex delar sitter trycker du A (eller X) för att provköra. Spaken gasar och styr, B tar dig tillbaka.</p>
-<p id="note"></p>
-<button id="vr" disabled>Kontrollerar VR…</button>
-<button id="mr" hidden>Starta med passthrough</button>
-</div></div>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-<script>
-const T=THREE;
-const renderer=new T.WebGLRenderer({antialias:true,alpha:true});
-renderer.setPixelRatio(Math.min(devicePixelRatio,2));
-renderer.setSize(innerWidth,innerHeight);
-renderer.xr.enabled=true;
-document.body.appendChild(renderer.domElement);
-const scene=new T.Scene();
-scene.background=new T.Color(0x9fb4c4);
-scene.fog=new T.Fog(0x9fb4c4,15,70);
-const cam=new T.PerspectiveCamera(70,innerWidth/innerHeight,0.05,150);
-const rig=new T.Group();rig.add(cam);scene.add(rig);
-scene.add(new T.HemisphereLight(0xffffff,0x556050,.9));
-const sun=new T.DirectionalLight(0xffffff,.8);sun.position.set(3,6,2);scene.add(sun);
 
-const std=c=>new T.MeshStandardMaterial({color:c,roughness:.55,metalness:.25});
-const box=(w,h,d,c,x=0,y=0,z=0)=>{const m=new T.Mesh(new T.BoxGeometry(w,h,d),std(c));m.position.set(x,y,z);return m};
+  <!-- Fysikmotorn konfigureras med stabil gravitation för VR -->
+  <a-scene physics="debug: false; gravity: -9.8; friction: 0.1; restitution: 0.2">
+    
+    <!-- Resurser (Assets) -->
+    <a-assets>
+      <a-mixin id="cube" geometry="primitive: box; width: 0.3; height: 0.3; depth: 0.3"
+               hoverable grabbable stretchable droppable
+               event-set__hoveron="_event: hover-start; material.opacity: 0.7"
+               event-set__hoveroff="_event: hover-end; material.opacity: 1"></a-mixin>
+      <a-mixin id="wheel" geometry="primitive: cylinder; radius: 0.2; height: 0.1"
+               rotation="0 0 90" hoverable grabbable droppable
+               event-set__hoveron="_event: hover-start; material.wireframe: true"
+               event-set__hoveroff="_event: hover-end; material.wireframe: false"></a-mixin>
+    </a-assets>
 
-// World
-const ground=new T.Mesh(new T.PlaneGeometry(200,200),std(0x6d7a63));ground.rotation.x=-Math.PI/2;scene.add(ground);
-const grid=new T.GridHelper(200,100,0x000000,0x000000);grid.material.opacity=.12;grid.material.transparent=true;scene.add(grid);
-const pad=new T.Mesh(new T.CylinderGeometry(1.4,1.4,.04,40),std(0x34383e));pad.position.set(.75,.02,-1.5);scene.add(pad);
-const table=new T.Group();
-table.add(box(.6,.05,1.6,0x8a6a45,0,.725,0));
-[[-.26,-.7],[.26,-.7],[-.26,.7],[.26,.7]].forEach(([x,z])=>table.add(box(.05,.7,.05,0x5b4630,x,.35,z)));
-table.position.set(-1,0,-1.5);scene.add(table);
-for(let i=0;i<12;i++){const c=new T.Mesh(new T.ConeGeometry(.2,.55,16),std(0xf26a1b));c.position.set((i%2?1:-1)*1.6+.75,.275,-6-i*3.2);scene.add(c)}
-let seed=7;const rnd=()=>(seed=(seed*16807)%2147483647)/2147483647;
-for(let i=0;i<40;i++){const s=.4+rnd()*1.2;const r=box(s,s*.6,s,0x7d8590,(rnd()-.5)*90,s*.3,-10-rnd()*45);r.rotation.y=rnd()*3;scene.add(r)}
+    <!-- Miljö och golv -->
+    <a-sky color="#ECEFF1"></a-sky>
+    <a-grid id="ground" static-body geometry="primitive: plane; width: 100; height: 100" 
+            material="color: #37474F; repeat: 100 100" rotation="-90 0 0"></a-grid>
 
-// Parts
-const parts=[],socks=[];
-function makePart(type,gm){
-  const M=c=>gm||std(c);
-  const g=new T.Group(),inner=new T.Group();g.add(inner);
-  g.userData={type,inner,h:.2,vel:new T.Vector3(),sock:null,held:null};
-  const add=(w,h,d,c,x,y,z)=>{const m=new T.Mesh(new T.BoxGeometry(w,h,d),M(c));m.position.set(x,y,z);inner.add(m)};
-  if(type==='wheel'){
-    inner.add(new T.Mesh(new T.CylinderGeometry(.18,.18,.12,24).rotateZ(Math.PI/2),M(0x222428)));
-    inner.add(new T.Mesh(new T.CylinderGeometry(.09,.09,.14,12).rotateZ(Math.PI/2),M(0xf2b705)));
-    add(.15,.3,.04,0xdddddd,0,0,0);g.userData.h=.18;
-  }else if(type==='engine'){
-    add(.4,.25,.35,0xc0392b,0,0,0);
-    [-.1,.1].forEach(x=>{const p=new T.Mesh(new T.CylinderGeometry(.04,.04,.15,10),M(0x999999));p.position.set(x,.2,0);inner.add(p)});
-    g.userData.h=.125;
-  }else{
-    add(.4,.08,.4,0x2f6fdb,0,0,0);add(.4,.4,.08,0x2f6fdb,0,.24,.2);g.userData.h=.04;
-  }
-  return g;
-}
-const vehicle=new T.Group();scene.add(vehicle);
-const START=new T.Vector3(.75,0,-1.5);
-vehicle.position.copy(START);
-vehicle.add(box(.8,.08,1.7,0x4a4f57,0,.3,0));
-vehicle.add(box(.8,.1,.1,0xf2b705,0,.3,-.85));
-[-.35,.35].forEach(x=>vehicle.add(box(.05,.08,1.7,0x2d3136,x,.38,0)));
-function addSock(type,x,y,z){
-  const gm=new T.MeshBasicMaterial({color:0xf2b705,transparent:true,opacity:.25,depthWrite:false});
-  const ghost=makePart(type,gm);ghost.position.set(x,y,z);vehicle.add(ghost);
-  socks.push({type,pos:new T.Vector3(x,y,z),ghost,gm,part:null});
-}
-[[-.5,-.6],[.5,-.6],[-.5,.6],[.5,.6]].forEach(([x,z])=>addSock('wheel',x,.18,z));
-addSock('engine',0,.465,-.4);addSock('seat',0,.38,.3);
-[[-1.15,-2.05,'wheel'],[-.85,-2.05,'wheel'],[-1.15,-1.75,'wheel'],[-.85,-1.75,'wheel'],[-1,-1.4,'engine'],[-1,-.95,'seat']].forEach(([x,z,t])=>{
-  const p=makePart(t);p.position.set(x,.75+p.userData.h,z);scene.add(p);parts.push(p);
-});
+    <!-- Byggbord / Arbetsbänk -->
+    <a-box id="workbench" static-body position="0 0.6 -1" width="2" height="0.6" depth="1" material="color: #78909C">
+      <!-- UI-Knapp för att testa fordonet -->
+      <a-box id="start-button" vehicle-controller position="0 0.35 0.3" width="0.4" height="0.1" depth="0.2" material="color: #FF5722" class="clickable">
+        <a-text value="KÖR" align="center" position="0 0.06 0" rotation="-90 0 0" width="1.5" color="#FFF"></a-text>
+      </a-box>
+    </a-box>
 
-// HUD
-const hc=document.createElement('canvas');hc.width=640;hc.height=320;
-const hx=hc.getContext('2d'),htex=new T.CanvasTexture(hc);
-const hud=new T.Mesh(new T.PlaneGeometry(1.2,.6),new T.MeshBasicMaterial({map:htex,transparent:true}));
-let hk='';
-function drawHud(a,b,c){
-  const k=a+b+c;if(k===hk)return;hk=k;
-  hx.fillStyle='#1c1e22';hx.fillRect(0,0,640,320);
-  hx.fillStyle='#f2b705';hx.fillRect(0,0,14,320);
-  hx.fillStyle='#fff';hx.font='700 46px system-ui,sans-serif';hx.fillText(a,44,90);
-  hx.fillStyle='#eceef0';hx.font='500 36px system-ui,sans-serif';hx.fillText(b,44,170);
-  hx.fillStyle='#aab1b9';hx.font='26px system-ui,sans-serif';hx.fillText(c,44,240);
-  htex.needsUpdate=true;
-}
-function placeHud(driving){
-  if(driving){vehicle.add(hud);hud.position.set(0,.95,-.75);hud.scale.setScalar(.45)}
-  else{scene.add(hud);hud.position.set(.4,1.5,-3.2);hud.scale.setScalar(1)}
-}
-placeHud(false);
+    <!-- FORDONSCHASSI (Basen som du ska bygga på) -->
+    <a-box id="chassis" static-body position="0 0.75 -1" width="0.8; height: 0.15; depth: 1.4" material="color: #1E88E5" droppable>
+      <a-text value="CHASSI" align="center" position="0 0.1 0" rotation="-90 0 0" width="2"></a-text>
+    </a-box>
 
-// Controllers
-const ctrls=[];
-for(let i=0;i<2;i++){
-  const c=renderer.xr.getController(i);
-  c.userData={held:null,gp:null,prev:new T.Vector3(),vel:new T.Vector3(),btnA:false,btnB:false};
-  c.add(new T.Mesh(new T.SphereGeometry(.03),std(0xffffff)));
-  c.addEventListener('connected',e=>{c.userData.gp=e.data.gamepad||null});
-  c.addEventListener('disconnected',()=>{c.userData.gp=null});
-  ['selectstart','squeezestart'].forEach(n=>c.addEventListener(n,()=>grab(c)));
-  ['selectend','squeezeend'].forEach(n=>c.addEventListener(n,()=>release(c)));
-  rig.add(c);ctrls.push(c);
-}
-const tv=new T.Vector3(),tv2=new T.Vector3();
-function pulse(c,v,ms){try{c.userData.gp.hapticActuators[0].pulse(v,ms)}catch(e){}}
-let mode='build',vel=0,yaw=0,msg='',msgT=0;
+    <!-- BYGGDELAR (Hjul som ligger på bordet redo att monteras) -->
+    <!-- Genom att dra dessa till chassit aktiveras snap-build komponenten -->
+    
+    
+    
+    
 
-function grab(c){
-  if(mode!=='build'||c.userData.held)return;
-  c.getWorldPosition(tv);
-  let best=null,bd=.28;
-  for(const p of parts){
-    if(p.userData.held)continue;
-    p.getWorldPosition(tv2);
-    const d=tv.distanceTo(tv2);if(d<bd){bd=d;best=p}
-  }
-  if(!best)return;
-  const u=best.userData;
-  if(u.sock){u.sock.part=null;u.sock.ghost.visible=true;u.sock=null}
-  c.attach(best);u.held=c;u.vel.set(0,0,0);c.userData.held=best;pulse(c,.4,40);
-}
-function bestSock(p){
-  const u=p.userData;p.getWorldPosition(tv);
-  let best=null,bd=.25;
-  for(const s of socks){
-    if(s.part||s.type!==u.type)continue;
-    vehicle.localToWorld(tv2.copy(s.pos));
-    const d=tv.distanceTo(tv2);if(d<bd){bd=d;best=s}
-  }
-  return best;
-}
-function release(c){
-  const p=c.userData.held;if(!p)return;
-  const u=p.userData;
-  scene.attach(p);u.held=null;c.userData.held=null;
-  const s=bestSock(p);
-  if(s){
-    vehicle.add(p);p.position.copy(s.pos);p.rotation.set(0,0,0);u.inner.rotation.set(0,0,0);
-    s.part=p;s.ghost.visible=false;u.sock=s;pulse(c,.8,80);
-  }else u.vel.copy(c.userData.vel).multiplyScalar(.9);
-}
-function resetVehicle(){
-  vehicle.position.copy(START);yaw=0;vel=0;vehicle.rotation.set(0,0,0);
-  socks.forEach(s=>{if(s.part){s.part.rotation.set(0,0,0);s.part.userData.inner.rotation.set(0,0,0)}});
-  rig.position.set(-.15,0,-1.5);rig.rotation.set(0,0,0);
-}
-function setMode(m){
-  if(m==='drive'){
-    if(!socks.every(s=>s.part)){msg='Montera alla delar först';msgT=2;return}
-    ctrls.forEach(release);mode='drive';placeHud(true);
-  }else{mode='build';placeHud(false);resetVehicle()}
-}
+    <!-- Extra dekorationsblock/raketmotor -->
+    
 
-const up=new T.Quaternion(),eu=new T.Euler();
-const supportY=p=>(Math.abs(p.x+1)<.3&&Math.abs(p.z+1.5)<.8)?.75:0;
-function physics(dt){
-  for(const p of parts){
-    if(p.parent!==scene)continue;
-    const u=p.userData;u.vel.y-=9.8*dt;p.position.addScaledVector(u.vel,dt);
-    const s=supportY(p.position)+u.h;
-    if(p.position.y<s){
-      p.position.y=s;u.vel.y=Math.abs(u.vel.y)>1.5?-u.vel.y*.3:0;u.vel.x*=.85;u.vel.z*=.85;
-      eu.setFromQuaternion(p.quaternion,'YXZ');up.setFromEuler(new T.Euler(0,eu.y,0));p.quaternion.slerp(up,.15);
-    }
-  }
-}
-const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
-const dz=v=>Math.abs(v)<.12?0:v;
-const clock=new T.Clock();
+    <!-- VR-SPELARE OCH HANDKONTROLLER (Anpassat för Quest 3S) -->
+    
+      <a-camera position="0 1.6 0"></a-camera>
+      
+      <!-- Vänster handkontroll med laser och grepp-funktion -->
+      
+      
+      <!-- Höger handkontroll med laser och grepp-funktion -->
+      
+    
 
-function frame(){
-  const dt=Math.min(clock.getDelta(),.05),t=clock.elapsedTime;
-  // controller state
-  for(const c of ctrls){
-    const u=c.userData;c.getWorldPosition(tv);
-    u.vel.lerp(tv.clone().sub(u.prev).divideScalar(Math.max(dt,.001)),.4);u.prev.copy(tv);
-    const g=u.gp;
-    if(g&&g.buttons){
-      const a=!!(g.buttons[4]&&g.buttons[4].pressed),b=!!(g.buttons[5]&&g.buttons[5].pressed);
-      if(a&&!u.btnA)setMode(mode==='build'?'drive':'build');
-      if(b&&!u.btnB&&mode==='drive')setMode('build');
-      u.btnA=a;u.btnB=b;
-    }
-  }
-  if(mode==='build'){
-    physics(dt);
-    socks.forEach(s=>{s.gm.opacity=.25;s.gm.color.set(0xf2b705)});
-    ctrls.forEach(c=>{const p=c.userData.held;if(p){const s=bestSock(p);if(s){s.gm.opacity=.7;s.gm.color.set(0x3ddc84)}}});
-    const n=socks.filter(s=>s.part).length;
-    const l3=msgT>0?msg:(n===6?'Tryck A eller X för att provköra':'Sätt delarna på de gula formerna');
-    drawHud('Bygg fordonet','Monterat: '+n+' av 6',l3);
-  }else{
-    let ax=0,ay=0;
-    for(const c of ctrls){const g=c.userData.gp;if(g&&g.axes&&g.axes.length>=4){ax+=g.axes[2];ay+=g.axes[3]}}
-    ax=dz(clamp(ax,-1,1));ay=dz(clamp(ay,-1,1));
-    const th=-ay;
-    vel+=th*7*dt;vel-=vel*(th===0?1.6:.5)*dt;vel=clamp(vel,-4,12);
-    yaw-=ax*vel*.22*dt;
-    vehicle.rotation.y=yaw;
-    vehicle.position.x=clamp(vehicle.position.x-Math.sin(yaw)*vel*dt,-45,45);
-    vehicle.position.z=clamp(vehicle.position.z-Math.cos(yaw)*vel*dt,-90,20);
-    socks.forEach(s=>{
-      if(s.type!=='wheel')return;
-      s.part.userData.inner.rotation.x-=vel*dt/.18;
-      if(s.pos.z<0)s.part.rotation.y=-ax*.4;
-    });
-    rig.position.set(vehicle.position.x+.3*Math.sin(yaw),.12,vehicle.position.z+.3*Math.cos(yaw));
-    rig.rotation.y=yaw;
-    drawHud('Provkörning',Math.round(Math.abs(vel)*3.6)+' km/h','Spak: gas och styr. B: tillbaka');
-  }
-  if(msgT>0)msgT-=dt;
-  if(!renderer.xr.isPresenting){
-    rig.position.set(0,0,0);rig.rotation.set(0,0,0);
-    const a=t*.25;cam.position.set(.4+Math.cos(a)*3.6,1.7,-1.5+Math.sin(a)*3.6);cam.lookAt(.1,.5,-1.5);
-  }
-  renderer.render(scene,cam);
-}
-renderer.setAnimationLoop(frame);
-addEventListener('resize',()=>{cam.aspect=innerWidth/innerHeight;cam.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight)});
-
-// Enter VR
-const btn=document.getElementById('vr'),mrBtn=document.getElementById('mr'),note=document.getElementById('note'),ui=document.getElementById('ui');
-const inFrame=window.self!==window.top;
-const bgOn=()=>{scene.background=new T.Color(0x9fb4c4);scene.fog=new T.Fog(0x9fb4c4,15,70);ground.visible=grid.visible=true};
-renderer.xr.addEventListener('sessionstart',()=>{ui.style.display='none';resetVehicle();mode='build';placeHud(false)});
-renderer.xr.addEventListener('sessionend',()=>{ui.style.display='flex';bgOn()});
-async function start(kind){
-  try{
-    const s=await navigator.xr.requestSession(kind,{optionalFeatures:['local-floor','bounded-floor']});
-    if(kind==='immersive-ar'){scene.background=null;scene.fog=null;ground.visible=grid.visible=false}else bgOn();
-    renderer.xr.setReferenceSpaceType('local-floor');
-    await renderer.xr.setSession(s);
-  }catch(e){
-    bgOn();
-    note.textContent='Kunde inte starta ('+((e&&e.name)||'fel')+'). '+(inFrame?'Sidan visas i en ram som blockerar VR. Öppna den direkt i Meta Quest Browser.':'Kontrollera att webbläsaren får använda VR.');
-  }
-}
-(async()=>{
-  const xr=navigator.xr;
-  if(!xr){btn.textContent='WebXR saknas i den här webbläsaren';note.textContent=inFrame?'Sidan visas i en ram. Öppna den direkt i Meta Quest Browser.':'Öppna länken i Meta Quest Browser på din Quest 3S.';return}
-  let vr=false,ar=false;
-  try{vr=await xr.isSessionSupported('immersive-vr')}catch(e){}
-  try{ar=await xr.isSessionSupported('immersive-ar')}catch(e){}
-  if(!vr&&!ar){btn.textContent='VR stöds inte här';note.textContent=inFrame?'Sidan visas i en ram som blockerar VR. Öppna den direkt i Meta Quest Browser.':'Ingen VR-enhet hittades. Anslut headsetet eller öppna sidan i Quest-webbläsaren.';return}
-  if(vr){btn.disabled=false;btn.textContent='Gå in i VR';btn.onclick=()=>start('immersive-vr')}
-  else btn.textContent='VR saknas';
-  if(ar){mrBtn.hidden=false;mrBtn.onclick=()=>start('immersive-ar')}
-})();
-</script>
+  </a-scene>
 </body>
 </html>
